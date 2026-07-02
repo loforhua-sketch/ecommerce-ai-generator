@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>电商自动详情页系统 MVP</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="workspace-panel">
+        <div class="brand-bar">
+          <div class="brand-mark">D</div>
+          <div>
+            <h1>详情页生成器</h1>
+            <p>商品信息录入后实时生成首屏、卖点、参数和 FAQ。</p>
+          </div>
+        </div>
+
+        <section class="control-section">
+          <div class="section-title">
+            <span>商品基础</span>
+            <button id="loadDemo" class="ghost-button" type="button">填入示例</button>
+          </div>
+
+          <label>
+            商品名称
+            <input id="productName" type="text" value="AeroFit 智能恒温运动水杯" />
+          </label>
+
+          <label>
+            品类
+            <select id="category">
+              <option value="智能运动装备">智能运动装备</option>
+              <option value="美妆个护">美妆个护</option>
+              <option value="家居生活">家居生活</option>
+              <option value="数码配件">数码配件</option>
+              <option value="母婴用品">母婴用品</option>
+            </select>
+          </label>
+
+          <div class="two-column">
+            <label>
+              售价
+              <input id="price" type="number" value="199" min="1" />
+            </label>
+            <label>
+              原价
+              <input id="originPrice" type="number" value="299" min="1" />
+            </label>
+          </div>
+
+          <label>
+            商品图片 URL
+            <input id="imageUrl" type="url" value="https://images.unsplash.com/photo-1602143407151-7111542de6e8?auto=format&fit=crop&w=1200&q=80" />
+          </label>
+
+          <label>
+            目标人群
+            <input id="audience" type="text" value="通勤、健身、户外运动用户" />
+          </label>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <span>自动文案</span>
+            <button id="generateCopy" class="primary-button" type="button">生成文案</button>
+          </div>
+
+          <label>
+            核心卖点
+            <textarea id="features" rows="5">6 小时智能恒温
+316 不锈钢内胆
+APP 饮水提醒
+一键拆洗杯盖</textarea>
+          </label>
+
+          <label>
+            参数
+            <textarea id="specs" rows="4">容量：650ml
+重量：340g
+材质：316 不锈钢
+续航：14 天</textarea>
+          </label>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <span>发布检查</span>
+            <button id="exportHtml" class="ghost-button" type="button">导出 HTML</button>
+          </div>
+          <div id="qualityList" class="quality-list"></div>
+        </section>
+      </aside>
+
+      <section class="preview-panel">
+        <div class="preview-toolbar">
+          <div>
+            <strong>实时详情页预览</strong>
+            <span id="statusText">已同步</span>
+          </div>
+          <div class="device-toggle" aria-label="预览宽度">
+            <button class="toggle-active" type="button" data-width="desktop">桌面</button>
+            <button type="button" data-width="mobile">手机</button>
+          </div>
+        </div>
+
+        <article id="detailPage" class="detail-page desktop-preview">
+          <section class="product-hero">
+            <div class="hero-copy">
+              <span id="previewCategory" class="category-pill">智能运动装备</span>
+              <h2 id="previewName">AeroFit 智能恒温运动水杯</h2>
+              <p id="previewTagline">为通勤、健身、户外运动用户打造，兼顾颜值、性能与日常效率。</p>
+              <div class="price-row">
+                <strong id="previewPrice">¥199</strong>
+                <span id="previewOrigin">¥299</span>
+              </div>
+              <div class="hero-actions">
+                <button type="button">立即购买</button>
+                <button type="button">加入购物车</button>
+              </div>
+            </div>
+            <div class="hero-media">
+              <img id="previewImage" alt="商品主图" />
+            </div>
+          </section>
+
+          <section class="selling-points">
+            <h3>核心卖点</h3>
+            <div id="previewFeatures" class="feature-grid"></div>
+          </section>
+
+          <section class="story-band">
+            <div>
+              <h3 id="storyTitle">让每一次补水都刚刚好</h3>
+              <p id="storyText">系统将商品特征转化为用户能理解的场景表达，适合店铺详情页首屏、信息流落地页和私域成交页。</p>
+            </div>
+          </section>
+
+          <section class="spec-section">
+            <h3>商品参数</h3>
+            <dl id="previewSpecs"></dl>
+          </section>
+
+          <section class="faq-section">
+            <h3>购买前常见问题</h3>
+            <div id="previewFaq"></div>
+          </section>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
