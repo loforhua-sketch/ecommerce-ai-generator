@@ -5,9 +5,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    ai_provider: str = "ollama"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5vl:7b"
+    ollama_timeout: int = 180
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    backend_cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    backend_cors_origins: str = "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174"
     database_path: str = "backend/data/app.db"
     upload_dir: str = "backend/uploads"
 

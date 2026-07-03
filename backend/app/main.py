@@ -10,13 +10,15 @@ from fastapi.responses import HTMLResponse, Response
 from .config import Settings, get_settings
 from .database import Database
 from .services.html_builder import build_detail_html
+from .services.ollama_service import OllamaProductService
 from .services.openai_service import OpenAIProductService
 
 app = FastAPI(title="Ecommerce AI Generator", version="1.0.0")
 
 
 def image_data_url(path: Path) -> str:
-    media_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    suffix = path.suffix.lower()
+    media_type = "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "image/jpeg"
     encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
     return f"data:{media_type};base64,{encoded}"
 
@@ -44,7 +46,14 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    settings = get_settings()
+    return {"status": "ok", "provider": settings.ai_provider}
+
+
+def get_product_service(settings: Settings) -> OpenAIProductService | OllamaProductService:
+    if settings.ai_provider.lower() == "openai":
+        return OpenAIProductService(settings.openai_api_key, settings.openai_model)
+    return OllamaProductService(settings.ollama_base_url, settings.ollama_model, settings.ollama_timeout)
 
 
 @app.post("/api/generate")
@@ -58,8 +67,9 @@ async def generate(
     price: str = Form(""),
     origin_price: str = Form(""),
 ) -> dict[str, list[dict]]:
-    service = OpenAIProductService(settings.openai_api_key, settings.openai_model)
+    service = get_product_service(settings)
     results = []
+
     for file in files:
         if not file.content_type or not file.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail=f"{file.filename} 不是图片文件")
@@ -93,6 +103,7 @@ async def generate(
                 }
             )
         )
+
     return {"items": results}
 
 
@@ -123,6 +134,7 @@ def export_generation_html(generation_id: int, db: Annotated[Database, Depends(g
         item = db.get_generation(generation_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="记录不存在") from exc
+
     filename = f"detail-page-{generation_id}.html"
     return Response(
         item["html"],
@@ -136,5 +148,7 @@ def uploaded_file(filename: str, settings: Annotated[Settings, Depends(get_setti
     path = settings.upload_path / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="图片不存在")
-    media_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+
+    suffix = path.suffix.lower()
+    media_type = "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "image/jpeg"
     return Response(path.read_bytes(), media_type=media_type)

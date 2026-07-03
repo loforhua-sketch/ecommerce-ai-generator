@@ -1,7 +1,7 @@
 <template>
   <div class="copy-line">
     <strong>{{ label }}</strong>
-    <span>{{ value }}</span>
+    <span>{{ value || "暂无内容" }}</span>
     <el-button size="small" :icon="DocumentCopy" @click="copy">复制</el-button>
   </div>
 </template>
@@ -16,8 +16,7 @@ const props = defineProps({
 });
 
 async function copy() {
-  await navigator.clipboard.writeText(props.value);
-  ElMessage.success(`${props.label}标题已复制`);
+  await navigator.clipboard.writeText(props.value || "");
+  ElMessage.success(`${props.label}已复制`);
 }
 </script>
-
