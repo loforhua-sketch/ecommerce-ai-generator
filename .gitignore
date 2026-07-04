@@ -11,3 +11,6 @@ frontend/dist/
 *.log
 backend/backend/data/app.db
 backend/data/app.db
+*.db
+backend/data/
+backend/backend/data/
