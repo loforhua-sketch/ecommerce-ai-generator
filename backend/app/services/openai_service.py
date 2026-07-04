@@ -7,8 +7,10 @@ from openai import OpenAI
 
 
 SYSTEM_PROMPT = """你是资深中国电商运营、视觉识别和详情页策划。
-请根据商品图片和补充信息识别商品，并生成可直接用于淘宝、拼多多、抖店的商品标题、卖点文案和详情页模块文案。
-输出必须是严格 JSON，不要输出 Markdown，不要包含虚假极限词、医疗功效承诺或无法从图片/信息合理推断的绝对化表达。"""
+请根据商品图片和补充信息识别商品，并生成可直接用于淘宝、拼多多、抖店上架的商品标题、卖点文案和详情页模块文案。
+标题必须符合真实中国电商风格：像淘宝、拼多多、抖店商家真实上架标题，不写广告口号式标题，不堆砌无关词。
+输出必须是严格 JSON，只能输出一个 JSON 对象；不要输出 Markdown，不要用代码块包裹 JSON，不要包含注释或额外解释。
+不要包含虚假极限词、医疗功效承诺、绝对化承诺，或无法从图片/补充信息合理推断的参数。"""
 
 
 REQUIRED_FIELDS = {
@@ -17,13 +19,19 @@ REQUIRED_FIELDS = {
     "audience": "",
     "tagline": "",
     "materials": [],
+    "functions": [],
     "specifications": {},
     "use_scenes": [],
+    "core_keywords": [],
+    "long_tail_keywords": [],
+    "core_selling_points": [],
+    "five_point_description": [],
     "selling_points": [],
     "taobao_title": "",
     "pdd_title": "",
     "douyin_title": "",
     "selling_copy": [],
+    "detail_page_modules": [],
     "detail_modules": [],
     "buying_reasons": [],
 }
@@ -50,14 +58,25 @@ def _fallback(product_name: str, category: str, audience: str, price: str = "", 
     if origin_price:
         specs["参考原价"] = origin_price
 
-    return {
+    data = {
         "product_name": name,
         "category": product_category,
         "audience": target,
         "tagline": f"围绕{target}的真实需求，生成更适合上架转化的商品详情页。",
         "materials": ["请结合实物图片复核材质", "支持在生成后手动补充规格"],
+        "functions": ["满足日常使用需求", "适合电商详情页展示"],
         "specifications": specs,
         "use_scenes": ["居家日用", "送礼自用", "店铺新品上架"],
+        "core_keywords": [name, product_category],
+        "long_tail_keywords": [f"{name}家用", f"{name}实用款", f"{product_category}新品上架"],
+        "core_selling_points": ["主体清晰，适合详情页首屏展示", "卖点结构完整，便于多平台上架", "参数和场景模块可继续编辑"],
+        "five_point_description": [
+            "商品主体清晰，便于用户快速识别。",
+            "围绕材质、功能和使用场景组织卖点。",
+            "标题适配淘宝、拼多多、抖店不同平台。",
+            "参数信息可用于详情页基础展示。",
+            "详情页模块支持导出后继续编辑。",
+        ],
         "selling_points": ["主体清晰，适合详情页首屏展示", "卖点结构完整，便于多平台上架", "参数和场景模块可继续编辑", "支持一键导出 HTML 详情页"],
         "taobao_title": f"{name} 实用高颜值商品 家用场景适配 新品推荐",
         "pdd_title": f"{name} 实惠好物 家用实用 多件可选 新品上架",
@@ -75,6 +94,8 @@ def _fallback(product_name: str, category: str, audience: str, price: str = "", 
         ],
         "buying_reasons": ["信息完整，方便快速上架", "多平台标题可直接复制", "详情页 HTML 可下载二次编辑"],
     }
+    data["detail_page_modules"] = data["detail_modules"]
+    return data
 
 
 def _normalize_list(value: Any) -> list[str]:
@@ -102,14 +123,41 @@ def _normalize_modules(value: Any) -> list[dict[str, str]]:
 def _merge_with_fallback(data: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
     merged = {**REQUIRED_FIELDS, **fallback, **data}
     merged["materials"] = _normalize_list(merged.get("materials")) or fallback["materials"]
+    merged["functions"] = _normalize_list(merged.get("functions")) or fallback["functions"]
     merged["use_scenes"] = _normalize_list(merged.get("use_scenes")) or fallback["use_scenes"]
+    merged["core_keywords"] = _normalize_list(merged.get("core_keywords")) or fallback["core_keywords"]
+    merged["long_tail_keywords"] = _normalize_list(merged.get("long_tail_keywords")) or fallback["long_tail_keywords"]
+    merged["core_selling_points"] = _normalize_list(merged.get("core_selling_points")) or fallback["core_selling_points"]
+    merged["five_point_description"] = _normalize_list(merged.get("five_point_description")) or fallback["five_point_description"]
     merged["selling_points"] = _normalize_list(merged.get("selling_points")) or fallback["selling_points"]
     merged["selling_copy"] = _normalize_list(merged.get("selling_copy")) or fallback["selling_copy"]
     merged["buying_reasons"] = _normalize_list(merged.get("buying_reasons")) or fallback["buying_reasons"]
     merged["detail_modules"] = _normalize_modules(merged.get("detail_modules")) or fallback["detail_modules"]
+    merged["detail_page_modules"] = _normalize_modules(merged.get("detail_page_modules")) or merged["detail_modules"]
     if not isinstance(merged.get("specifications"), dict):
         merged["specifications"] = fallback["specifications"]
+    _apply_product_rules(merged)
     return merged
+
+
+def _apply_product_rules(data: dict[str, Any]) -> None:
+    searchable = " ".join(
+        str(data.get(key, ""))
+        for key in ("product_name", "category", "taobao_title", "pdd_title", "douyin_title")
+    )
+    if "楼梯垫" not in searchable and "楼梯踏步垫" not in searchable:
+        return
+
+    data["product_name"] = "防滑楼梯垫"
+    data["audience"] = "复式家庭、老人家庭、儿童家庭、养宠家庭"
+    data["core_keywords"] = ["防滑楼梯垫", "楼梯垫", "楼梯踏步垫", "楼梯防滑垫"]
+    data["long_tail_keywords"] = [
+        "家用防滑楼梯垫",
+        "自粘楼梯踏步垫",
+        "复式楼梯防滑垫",
+        "老人儿童楼梯防滑垫",
+        "养宠家庭楼梯垫",
+    ]
 
 
 class OpenAIProductService:
@@ -141,16 +189,22 @@ class OpenAIProductService:
 - 原价：{origin_price or "未知"}
 
 请返回 JSON，字段必须包含：
-product_name, category, audience, tagline, materials, specifications, use_scenes, selling_points,
-taobao_title, pdd_title, douyin_title, selling_copy, detail_modules, buying_reasons。
+product_name, category, audience, tagline, materials, functions, specifications, use_scenes,
+core_keywords, long_tail_keywords, core_selling_points, five_point_description, selling_points,
+taobao_title, pdd_title, douyin_title, selling_copy, detail_page_modules, detail_modules, buying_reasons。
 
 要求：
-1. selling_points 生成 5-8 条短句。
-2. use_scenes 生成 3-6 个使用场景。
-3. materials 识别材质、工艺、颜色、外观特征，无法确定时用“图片可见/建议复核”的谨慎表述。
-4. specifications 使用对象结构，包含品类、材质、颜色、尺寸/容量/型号等可识别规格。
-5. detail_modules 为数组，每项包含 title 和 content，覆盖首屏主图、核心卖点、场景展示、参数介绍、购买理由、结尾营销模块。
-6. 淘宝标题偏搜索关键词，拼多多标题偏实惠和场景，抖店标题偏短视频种草，但都要自然可读。
+1. product_name 输出真实商品名称，不输出图片描述；如果识别为楼梯垫/楼梯踏步垫，商品名称必须是“防滑楼梯垫”。
+2. audience 输出真实购买人群，不输出图片场景、拍摄场景或“家居场景”；如果是楼梯垫，必须输出“复式家庭、老人家庭、儿童家庭、养宠家庭”。
+3. materials 自动提取材质、工艺、颜色、外观特征；无法确定时用“图片可见/建议复核”的谨慎表述。
+4. functions 自动提取商品功能，例如防滑、防水、收纳、保暖、装饰、保护、清洁等，只写商品真实功能。
+5. use_scenes 输出 3-6 个使用场景，例如家庭楼梯、玄关、厨房、办公室、车内等，不要和 audience 混淆。
+6. core_keywords 输出 3-8 个核心关键词，long_tail_keywords 输出 5-10 个长尾关键词，必须围绕商品名称、材质、功能、场景。
+7. core_selling_points 输出 3-5 条核心卖点；five_point_description 必须输出 5 条五点描述；selling_points 输出 5-8 条短句。
+8. specifications 使用对象结构，包含品类、材质、颜色、尺寸/容量/型号、适用场景等可识别规格。
+9. detail_page_modules 和 detail_modules 都为数组，每项包含 title 和 content，覆盖首屏主张、核心卖点、材质工艺、功能场景、参数说明、购买理由、结尾转化模块。
+10. 淘宝标题偏搜索关键词和属性组合；拼多多标题偏实惠、家用、套装/多件等真实购买语境；抖店标题偏短视频种草和痛点解决。三类标题都要自然可读，像真实商家上架标题，不能写成品牌广告语。
+11. 严格 JSON：只能输出一个 JSON 对象，双引号包裹 key 和字符串，不要 Markdown，不要代码块，不要解释文字。
 """
         response = self.client.chat.completions.create(
             model=self.model,

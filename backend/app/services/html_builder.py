@@ -50,10 +50,12 @@ def build_detail_html(analysis: dict[str, Any], image_url: str) -> str:
     product = str(analysis.get("product_name") or "商品详情页")
     category = str(analysis.get("category") or "精选商品")
     tagline = str(analysis.get("tagline") or "")
-    selling_points = _as_list(analysis.get("selling_points"))
+    selling_points = _as_list(analysis.get("core_selling_points") or analysis.get("selling_points"))
     use_scenes = _as_list(analysis.get("use_scenes"))
     materials = _as_list(analysis.get("materials"))
-    selling_copy = _as_list(analysis.get("selling_copy") or analysis.get("detail_copy"))
+    selling_copy = _as_list(
+        analysis.get("five_point_description") or analysis.get("selling_copy") or analysis.get("detail_copy")
+    )
     buying_reasons = _as_list(analysis.get("buying_reasons"))
 
     return f"""<!doctype html>
@@ -133,7 +135,7 @@ def build_detail_html(analysis: dict[str, Any], image_url: str) -> str:
 
     <section class="closing">
       <h2>结尾营销模块</h2>
-      <div class="module-grid">{_module_blocks(analysis.get("detail_modules"))}</div>
+      <div class="module-grid">{_module_blocks(analysis.get("detail_page_modules") or analysis.get("detail_modules"))}</div>
     </section>
   </main>
 </body>
