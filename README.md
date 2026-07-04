@@ -1,23 +1,31 @@
 # AI 电商详情页生成器
 
-基于 Vue 3 + Vite + Element Plus + FastAPI + SQLite 的电商商品详情页生成工具。上传商品图片后，后端默认调用本地 Ollama `qwen2.5vl:7b` 识别商品信息，并自动生成淘宝、拼多多、抖店标题、卖点文案、详情页模块文案和可下载的 HTML 详情页。项目仍保留 OpenAI Vision 配置，可通过环境变量切换。
+基于 Vue 3 + Vite + Element Plus + FastAPI + SQLite 的电商商品详情页生成工具。上传商品图片后，后端调用本地 Ollama 或 OpenAI Vision 识别商品信息，并生成淘宝、拼多多、抖店三套详情页 HTML、平台标题和卖点文案。
 
-## 功能
+## v1.2 功能
 
-- 上传单张或多张商品图片
-- 本地 Ollama `qwen2.5vl:7b` 默认识别商品名称、品类、卖点、使用场景、材质和规格
-- 保留 OpenAI Vision 支持，可按需切换
-- 自动生成淘宝标题、拼多多标题、抖店标题
-- 自动生成商品卖点文案和详情页模块文案
-- 自动生成 HTML 详情页，包含首屏主图、核心卖点、场景展示、参数介绍、购买理由、结尾营销模块
-- 前端支持加载动画、生成进度、一键复制标题、复制 HTML、导出 HTML、下载详情页
-- SQLite 保存历史生成记录
+- 新增平台模板引擎：淘宝详情页、拼多多详情页、抖店详情页。
+- 前端支持平台选择：淘宝 / 拼多多 / 抖店。
+- 前端支持风格选择：简约 / 高端 / 促销 / 场景化。
+- 后端按平台生成不同 HTML：
+  - 淘宝：关键词丰富、参数清晰、详情模块完整。
+  - 拼多多：价格利益点突出、实惠感强。
+  - 抖店：短视频种草风格、卖点强、节奏快。
+- 每次成功生成都会保存三个平台的独立 HTML。
+- 单个 HTML 导出会按当前选择的平台下载 `taobao.html`、`pdd.html` 或 `douyin.html`。
+- ZIP 导出固定包含：
+  - `taobao.html`
+  - `pdd.html`
+  - `douyin.html`
+  - `titles.txt`
+  - `selling_points.txt`
+- 保持 v1.1 批量生成功能：一次上传多张图片、逐张生成、单张失败不影响后续图片。
 
 ## 目录结构
 
 ```text
 backend/             FastAPI 后端
-backend/app/         API、配置、数据库、Ollama/OpenAI 服务、HTML 生成器
+backend/app/         API、配置、数据库、Ollama/OpenAI 服务、HTML 模板引擎
 frontend/            Vue 3 前端
 requirements.txt     后端依赖
 docker-compose.yml   Docker 编排
@@ -48,8 +56,6 @@ UPLOAD_DIR=backend/uploads
 
 默认使用本地 Ollama。切换到 OpenAI 时设置 `AI_PROVIDER=openai` 并填写 `OPENAI_API_KEY`。
 
-如果 Ollama 服务不可用、模型未拉取或 OpenAI 未配置，后端会返回本地降级示例内容，便于验证项目是否可运行。
-
 ## Ollama 准备
 
 确保本机 Ollama 已启动，并拉取视觉模型：
@@ -58,8 +64,6 @@ UPLOAD_DIR=backend/uploads
 ollama pull qwen2.5vl:7b
 ollama serve
 ```
-
-后端会调用 `http://localhost:11434/api/generate`，把上传的商品图片传给 `qwen2.5vl:7b` 分析。
 
 ## 本地启动
 
@@ -86,25 +90,38 @@ npm run dev
 - 前端：http://localhost:5173
 - 后端文档：http://localhost:8000/docs
 
+## 使用方法
+
+1. 在左侧上传一张或多张商品图片。
+2. 填写商品名称、品类、目标人群、售价和原价。
+3. 选择平台：淘宝 / 拼多多 / 抖店。
+4. 选择风格：简约 / 高端 / 促销 / 场景化。
+5. 点击生成详情页或批量生成。
+6. 在右侧查看商品图片、平台标题、卖点和 HTML 详情页预览。
+7. 点击导出 HTML 下载当前平台的独立 HTML。
+8. 点击下载全部 ZIP 导出三平台 HTML、标题文本和卖点文本。
+
+## 主要接口
+
+- `POST /api/generate`：上传一张或多张图片并生成识别结果、标题、卖点和三平台 HTML。
+- `GET /api/generations`：查看历史记录。
+- `GET /api/generations/{id}`：查看单条记录。
+- `GET /api/generations/{id}/html?platform=taobao`：查看指定平台 HTML。
+- `GET /api/generations/{id}/export?platform=taobao`：下载指定平台 HTML。
+- `GET /api/generations/export.zip?ids=1,2,3`：下载 ZIP，包含三平台 HTML、`titles.txt` 和 `selling_points.txt`。
+- `GET /api/uploads/{filename}`：访问上传图片。
+
+## 验证命令
+
+```bash
+python -m compileall backend\app
+cd frontend
+npm.cmd run build
+```
+
 ## Docker 启动
 
 ```bash
 copy .env.example .env
 docker compose up --build
 ```
-
-## 主要接口
-
-- `POST /api/generate`：上传图片并生成识别结果、标题、文案和 HTML
-- `GET /api/generations`：查看历史记录
-- `GET /api/generations/{id}`：查看单条记录
-- `GET /api/generations/{id}/export`：下载 HTML 详情页
-- `GET /api/uploads/{filename}`：访问上传图片
-
-## 使用流程
-
-1. 上传商品图片。
-2. 可选填写商品名称、品类、目标人群、售价、原价。
-3. 点击“生成详情页”。
-4. 在结果区复制三平台标题，查看识别信息、卖点文案和 HTML 预览。
-5. 点击“导出 HTML”或“下载详情页”保存生成结果。

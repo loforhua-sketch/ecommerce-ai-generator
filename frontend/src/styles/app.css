@@ -94,6 +94,10 @@ h1 {
   gap: 12px;
 }
 
+.form-grid .el-select {
+  width: 100%;
+}
+
 .upload-icon {
   color: var(--accent);
   font-size: 34px;
@@ -111,6 +115,13 @@ h1 {
   align-items: center;
   gap: 16px;
   margin-bottom: 18px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .toolbar h2 {
@@ -131,9 +142,22 @@ h1 {
   background: var(--panel);
 }
 
+.result-card.failed {
+  grid-template-columns: 180px minmax(0, 1fr);
+}
+
 .image-wrap {
   min-height: 300px;
   background: #e6edf2;
+}
+
+.failed-thumb {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  background: #fff1f2;
+  color: #dc2626;
+  font-size: 42px;
 }
 
 .image-wrap img {
@@ -245,11 +269,17 @@ iframe {
 
 .progress-copy {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .progress-copy strong {
   font-size: 14px;
+}
+
+.progress-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .info-grid {
@@ -318,6 +348,10 @@ iframe {
   .result-card {
     grid-template-columns: 1fr;
   }
+
+  .result-card.failed {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -335,6 +369,15 @@ iframe {
   .toolbar,
   .card-head {
     align-items: flex-start;
+  }
+
+  .toolbar {
+    flex-direction: column;
+  }
+
+  .toolbar-actions {
+    justify-content: flex-start;
+    width: 100%;
   }
 
   .copy-line {

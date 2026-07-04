@@ -5,7 +5,7 @@
         <div class="brand-mark">AI</div>
         <div>
           <h1>AI 电商详情页生成器</h1>
-          <p>上传商品图片，自动生成多平台标题、卖点文案和 HTML 详情页。</p>
+          <p>一次上传多张商品图片，批量生成多平台标题、卖点和 HTML 详情页。</p>
         </div>
       </div>
 
@@ -57,15 +57,34 @@
           </el-form-item>
         </div>
 
+        <div class="form-grid">
+          <el-form-item label="平台选择">
+            <el-select v-model="form.platform">
+              <el-option label="淘宝" value="taobao" />
+              <el-option label="拼多多" value="pdd" />
+              <el-option label="抖店" value="douyin" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="风格选择">
+            <el-select v-model="form.style">
+              <el-option label="简约" value="simple" />
+              <el-option label="高端" value="premium" />
+              <el-option label="促销" value="promotion" />
+              <el-option label="场景化" value="scene" />
+            </el-select>
+          </el-form-item>
+        </div>
+
         <el-button native-type="submit" type="primary" size="large" :loading="loading">
           <el-icon><MagicStick /></el-icon>
-          批量生成
+          {{ fileList.length > 1 ? "批量生成" : "生成详情页" }}
         </el-button>
 
         <div v-if="loading" class="progress-box">
           <div class="loader"></div>
           <div class="progress-copy">
-            <strong>{{ progressText }}</strong>
+            <strong>正在生成第 {{ currentIndex }} 张 / 共 {{ totalCount }} 张</strong>
+            <span>{{ progressText }}</span>
             <el-progress :percentage="progress" :stroke-width="8" />
           </div>
         </div>
@@ -76,9 +95,14 @@
       <div class="toolbar">
         <div>
           <h2>生成结果</h2>
-          <span>{{ result ? "已渲染本次返回的第一条结果" : "等待上传商品图片" }}</span>
+          <span>{{ toolbarText }}</span>
         </div>
-        <el-button :icon="Refresh" @click="loadHistory">刷新历史</el-button>
+        <div class="toolbar-actions">
+          <el-button :icon="Refresh" @click="loadHistory">刷新历史</el-button>
+          <el-button type="primary" :icon="Download" :disabled="!successfulResults.length" @click="downloadAllZip">
+            下载全部 ZIP
+          </el-button>
+        </div>
       </div>
 
       <el-alert
@@ -90,79 +114,102 @@
         :closable="false"
       />
 
-      <el-empty v-if="!result && !loading" description="暂无生成结果" />
+      <el-empty v-if="!results.length && !loading" description="暂无生成结果" />
 
-      <article v-else-if="result" class="result-card">
-        <div class="image-wrap">
-          <img :src="imageSrc(result)" :alt="analysis.product_name || '商品图片'" />
-        </div>
-
-        <div class="card-body">
-          <div class="card-head">
-            <div>
-              <h3>{{ analysis.product_name || form.productName || "未识别商品名称" }}</h3>
-              <p>{{ analysis.category || form.category || "未识别品类" }} · {{ result.created_at || "刚刚生成" }}</p>
+      <div v-else class="result-grid">
+        <article
+          v-for="(item, index) in results"
+          :key="item.id || `${item.filename}-${index}`"
+          class="result-card"
+          :class="{ failed: isFailed(item) }"
+        >
+          <template v-if="isFailed(item)">
+            <div class="failed-thumb">
+              <el-icon><WarningFilled /></el-icon>
             </div>
-            <el-tag v-if="result.id" type="success">#{{ result.id }}</el-tag>
-          </div>
-
-          <div class="info-grid overview-grid">
-            <div>
-              <strong>商品名称</strong>
-              <span>{{ analysis.product_name || form.productName || "未识别" }}</span>
-            </div>
-            <div>
-              <strong>品类</strong>
-              <span>{{ analysis.category || form.category || "未识别" }}</span>
-            </div>
-            <div>
-              <strong>人群</strong>
-              <span>{{ analysis.audience || form.audience || "未识别" }}</span>
-            </div>
-          </div>
-
-          <el-tabs>
-            <el-tab-pane label="平台标题">
-              <div class="title-list">
-                <CopyLine label="淘宝标题" :value="analysis.taobao_title" />
-                <CopyLine label="拼多多标题" :value="analysis.pdd_title" />
-                <CopyLine label="抖店标题" :value="analysis.douyin_title" />
+            <div class="card-body">
+              <div class="card-head">
+                <div>
+                  <h3>{{ item.filename || `第 ${index + 1} 张图片` }}</h3>
+                  <p>生成失败</p>
+                </div>
+                <el-tag type="danger">失败</el-tag>
               </div>
-            </el-tab-pane>
+              <el-alert type="error" :title="item.error || '未知错误'" show-icon :closable="false" />
+            </div>
+          </template>
 
-            <el-tab-pane label="卖点">
-              <ul v-if="sellingPoints.length" class="selling-list">
-                <li v-for="point in sellingPoints" :key="point">{{ point }}</li>
-              </ul>
-              <el-empty v-else description="暂无卖点" />
-            </el-tab-pane>
+          <template v-else>
+            <div class="image-wrap">
+              <img :src="imageSrc(item)" :alt="item.analysis?.product_name || item.product_name || '商品图片'" />
+            </div>
 
-            <el-tab-pane label="详情页 HTML 预览">
-              <iframe :srcdoc="result.html || ''" title="详情页 HTML 预览"></iframe>
-            </el-tab-pane>
-          </el-tabs>
+            <div class="card-body">
+              <div class="card-head">
+                <div>
+                  <h3>{{ productName(item) }}</h3>
+                  <p>{{ item.analysis?.category || item.category || "未识别品类" }} · {{ item.created_at || "刚刚生成" }}</p>
+                </div>
+                <el-tag v-if="item.id" type="success">#{{ item.id }}</el-tag>
+              </div>
 
-          <div class="card-actions">
-            <el-button v-if="result.id" type="primary" :icon="Download" @click="download(result.id)">导出 HTML</el-button>
-            <el-button :icon="DocumentCopy" @click="copyHtml(result.html)">复制 HTML</el-button>
-          </div>
-        </div>
-      </article>
+              <div class="info-grid overview-grid">
+                <div>
+                  <strong>商品名称</strong>
+                  <span>{{ productName(item) }}</span>
+                </div>
+                <div>
+                  <strong>图片文件</strong>
+                  <span>{{ item.filename || item.image_path || "未命名图片" }}</span>
+                </div>
+              </div>
+
+              <el-tabs>
+                <el-tab-pane label="平台标题">
+                  <div class="title-list">
+                    <CopyLine label="淘宝标题" :value="item.analysis?.taobao_title" />
+                    <CopyLine label="拼多多标题" :value="item.analysis?.pdd_title" />
+                    <CopyLine label="抖店标题" :value="item.analysis?.douyin_title" />
+                  </div>
+                </el-tab-pane>
+
+                <el-tab-pane label="卖点">
+                  <ul v-if="sellingPoints(item).length" class="selling-list">
+                    <li v-for="point in sellingPoints(item)" :key="point">{{ point }}</li>
+                  </ul>
+                  <el-empty v-else description="暂无卖点" />
+                </el-tab-pane>
+
+                <el-tab-pane label="HTML 详情页预览">
+                  <iframe :srcdoc="previewHtml(item)" title="HTML 详情页预览"></iframe>
+                </el-tab-pane>
+              </el-tabs>
+
+              <div class="card-actions">
+                <el-button v-if="item.id" type="primary" :icon="Download" @click="download(item.id)">导出 HTML</el-button>
+                <el-button :icon="DocumentCopy" @click="copyHtml(previewHtml(item))">复制 HTML</el-button>
+              </div>
+            </div>
+          </template>
+        </article>
+      </div>
     </section>
   </main>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
-import { DocumentCopy, Download, MagicStick, Refresh, UploadFilled } from "@element-plus/icons-vue";
+import { DocumentCopy, Download, MagicStick, Refresh, UploadFilled, WarningFilled } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import CopyLine from "./components/CopyLine.vue";
-import { api, exportUrl, generateDetails } from "./api/client";
+import { api, exportUrl, exportZipUrl, generateDetails } from "./api/client";
 
 const loading = ref(false);
 const progress = ref(0);
+const currentIndex = ref(0);
+const totalCount = ref(0);
 const fileList = ref([]);
-const result = ref(null);
+const results = ref([]);
 const emptyResultMessage = ref("");
 const formError = ref("");
 const fieldErrors = reactive({
@@ -177,29 +224,47 @@ const form = reactive({
   category: "",
   audience: "",
   price: "",
-  originPrice: ""
+  originPrice: "",
+  platform: "taobao",
+  style: "simple"
 });
 
 let progressTimer = null;
 
-const analysis = computed(() => result.value?.analysis || {});
-const sellingPoints = computed(() => {
-  const value = analysis.value.selling_points;
-  return Array.isArray(value) ? value : [];
+const successfulResults = computed(() => results.value.filter((item) => !isFailed(item) && item.id));
+const toolbarText = computed(() => {
+  if (!results.value.length) return "等待上传商品图片";
+  const failedCount = results.value.filter(isFailed).length;
+  return `共 ${results.value.length} 条结果，成功 ${successfulResults.value.length} 条，失败 ${failedCount} 条`;
 });
 
 const progressText = computed(() => {
-  if (progress.value < 25) return "正在上传商品图片";
-  if (progress.value < 55) return "AI 正在识别商品信息";
-  if (progress.value < 78) return "正在生成平台标题和卖点文案";
-  if (progress.value < 95) return "正在组装 HTML 详情页";
-  return "正在保存生成结果";
+  if (!totalCount.value) return "正在准备生成任务";
+  return `后端将按图片逐张分析，失败图片会保留原因并继续处理后续图片`;
 });
+
+function isFailed(item) {
+  return item?.status === "failed" || Boolean(item?.error);
+}
+
+function productName(item) {
+  return item?.analysis?.product_name || item?.product_name || form.productName || "未识别商品名称";
+}
+
+function sellingPoints(item) {
+  const analysis = item?.analysis || {};
+  const value = analysis.selling_points || analysis.core_selling_points || [];
+  return Array.isArray(value) ? value : [];
+}
 
 function imageSrc(item) {
   if (!item?.image_path) return "";
   const base = import.meta.env.VITE_API_BASE_URL || "";
   return `${base}/api/uploads/${item.image_path}`;
+}
+
+function previewHtml(item) {
+  return item?.html_files?.[form.platform] || item?.html || "";
 }
 
 function clearError(field) {
@@ -230,12 +295,18 @@ function validateForm() {
 }
 
 function startProgress() {
-  progress.value = 8;
+  progress.value = 5;
+  currentIndex.value = 1;
+  totalCount.value = fileList.value.length;
   progressTimer = window.setInterval(() => {
     if (progress.value < 92) {
-      progress.value += progress.value < 60 ? 7 : 3;
+      progress.value += progress.value < 60 ? 5 : 2;
+      currentIndex.value = Math.min(
+        totalCount.value,
+        Math.max(1, Math.ceil((progress.value / 100) * totalCount.value))
+      );
     }
-  }, 650);
+  }, 900);
 }
 
 function stopProgress(done = false) {
@@ -244,6 +315,7 @@ function stopProgress(done = false) {
     progressTimer = null;
   }
   progress.value = done ? 100 : 0;
+  currentIndex.value = done ? totalCount.value : 0;
 }
 
 function buildPayload() {
@@ -256,6 +328,8 @@ function buildPayload() {
   payload.append("audience", form.audience);
   payload.append("price", form.price);
   payload.append("origin_price", form.originPrice);
+  payload.append("platform", form.platform);
+  payload.append("style", form.style);
   return payload;
 }
 
@@ -265,14 +339,12 @@ async function generate() {
 
   const payload = buildPayload();
   loading.value = true;
-  result.value = null;
+  results.value = [];
   emptyResultMessage.value = "";
   startProgress();
 
   try {
     const response = await generateDetails(payload);
-    console.log(response.data);
-
     const items = Array.isArray(response.data?.items) ? response.data.items : [];
     if (!items.length) {
       emptyResultMessage.value = "后端返回 items 为空，未生成可展示结果。";
@@ -280,16 +352,20 @@ async function generate() {
       return;
     }
 
-    result.value = items[0];
-    ElMessage.success("生成成功，已显示第一条结果");
+    results.value = items;
+    const failedCount = items.filter(isFailed).length;
+    if (failedCount) {
+      ElMessage.warning(`生成完成，${failedCount} 张图片失败，已保留失败原因`);
+    } else {
+      ElMessage.success("生成成功");
+    }
   } catch (error) {
     console.error("[generate] 请求失败", error);
-    const message =
-      error.response?.data?.detail || error.message || "生成失败，请检查后端服务、Ollama 服务或接口配置";
+    const message = error.response?.data?.detail || error.message || "生成失败，请检查后端服务、Ollama 服务或接口配置";
     formError.value = message;
     ElMessage.error(message);
   } finally {
-    stopProgress(Boolean(result.value));
+    stopProgress(Boolean(results.value.length));
     window.setTimeout(() => {
       loading.value = false;
       if (progress.value === 100) progress.value = 0;
@@ -301,7 +377,7 @@ async function loadHistory() {
   try {
     const { data } = await api.get("/api/generations");
     const items = Array.isArray(data.items) ? data.items : [];
-    result.value = items[0] || null;
+    results.value = items;
     emptyResultMessage.value = items.length ? "" : "历史记录为空。";
   } catch (error) {
     console.error("[history] 请求失败", error);
@@ -310,7 +386,16 @@ async function loadHistory() {
 }
 
 function download(id) {
-  window.location.href = exportUrl(id);
+  window.location.href = exportUrl(id, form.platform);
+}
+
+function downloadAllZip() {
+  const ids = successfulResults.value.map((item) => item.id);
+  if (!ids.length) {
+    ElMessage.warning("暂无可下载的成功结果");
+    return;
+  }
+  window.location.href = exportZipUrl(ids);
 }
 
 async function copyHtml(html) {
