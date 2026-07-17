@@ -25,3 +25,7 @@ frontend/dist/
 
 # Generated files
 *.zip
+
+# Runtime uploaded files
+backend/backend/uploads/
+backend/uploads/

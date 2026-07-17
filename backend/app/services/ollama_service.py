@@ -1,6 +1,7 @@
 import base64
 import ast
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from .openai_service import SYSTEM_PROMPT, _fallback, _merge_with_fallback
 
 
 _JSON_CODE_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+logger = logging.getLogger(__name__)
 
 
 def _image_base64(path: Path) -> str:
@@ -162,14 +164,13 @@ taobao_title, pdd_title, douyin_title, selling_copy, detail_page_modules, detail
         try:
             with request.urlopen(req, timeout=self.timeout) as response:
                 response_body = response.read().decode("utf-8")
-            print(f"Ollama raw response (first 500 chars): {response_body[:500]}")
-
             content = _ollama_response_content(response_body)
             data = _parse_model_content(content)
             if data is None:
                 data = {"selling_copy": [content or response_body]}
         except (OSError, error.URLError, TimeoutError) as exc:
-            print(f"Ollama request failed: {exc}")
+            message = re.sub(r"\s+", " ", str(exc)).strip()[:240]
+            logger.warning("ollama_request_failed error=%s", message or exc.__class__.__name__)
             data = {}
 
         return _merge_with_fallback(data, fallback)

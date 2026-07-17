@@ -1,0 +1,1 @@
+"""Ecommerce AI backend package."""

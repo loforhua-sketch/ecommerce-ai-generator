@@ -5,19 +5,30 @@ services:
       dockerfile: backend/Dockerfile
     env_file:
       - .env
+    environment:
+      DATABASE_PATH: /app/backend/data/app.db
+      UPLOAD_DIR: /app/backend/uploads
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      BACKEND_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      PYTHONUNBUFFERED: "1"
     ports:
       - "8000:8000"
     volumes:
       - ./backend/data:/app/backend/data
       - ./backend/uploads:/app/backend/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build:
       context: ./frontend
-    environment:
-      - VITE_API_BASE_URL=http://localhost:8000
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
-      - backend
-
+      backend:
+        condition: service_healthy

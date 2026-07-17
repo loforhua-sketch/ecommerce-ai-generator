@@ -1,6 +1,15 @@
 # AI 电商详情页生成器
 
-基于 Vue 3 + Vite + Element Plus + FastAPI + SQLite 的电商商品详情页生成工具。上传商品图片后，后端调用本地 Ollama 或 OpenAI Vision 识别商品信息，并生成淘宝、拼多多、抖店三套详情页 HTML、平台标题和卖点文案。
+基于 Vue 3 + Vite + Element Plus + FastAPI + SQLite 的电商商品详情页生成工具。上传商品图片后，后端调用本地 Ollama 或 OpenAI Vision 识别商品信息，并生成淘宝、拼多多、抖店三套详情页 HTML、平台标题、卖点文案和场景图 Prompt。
+
+## v1.3 功能
+
+- 新增 AI 场景图 Prompt 生成：根据商品识别结果自动生成 2-4 条可用于后续 AI 生图的场景 Prompt。
+- 支持场景图风格：北欧风、现代风、轻奢风、母婴风、家居实拍风。
+- 前端新增“场景图 Prompt”展示区域，可直接复制每条 Prompt。
+- ZIP 导出新增 `scene_prompts.txt` 和 `scenes/README.txt`。
+- 当前版本不接入真实生图 API，只生成 Prompt 和场景图占位说明文件。
+- 保持 v1.2 的淘宝、拼多多、抖店模板功能正常。
 
 ## v1.2 功能
 
@@ -19,6 +28,8 @@
   - `douyin.html`
   - `titles.txt`
   - `selling_points.txt`
+  - `scene_prompts.txt`
+  - `scenes/README.txt`
 - 保持 v1.1 批量生成功能：一次上传多张图片、逐张生成、单张失败不影响后续图片。
 
 ## 目录结构
@@ -77,6 +88,12 @@ pip install -r ..\requirements.txt
 python start.py
 ```
 
+也可以从项目根目录直接启动后端（不依赖当前工作目录解析数据和静态文件）：
+
+```bash
+python -m backend.app.main
+```
+
 启动前端：
 
 ```bash
@@ -95,20 +112,21 @@ npm run dev
 1. 在左侧上传一张或多张商品图片。
 2. 填写商品名称、品类、目标人群、售价和原价。
 3. 选择平台：淘宝 / 拼多多 / 抖店。
-4. 选择风格：简约 / 高端 / 促销 / 场景化。
-5. 点击生成详情页或批量生成。
-6. 在右侧查看商品图片、平台标题、卖点和 HTML 详情页预览。
-7. 点击导出 HTML 下载当前平台的独立 HTML。
-8. 点击下载全部 ZIP 导出三平台 HTML、标题文本和卖点文本。
+4. 选择详情页风格：简约 / 高端 / 促销 / 场景化。
+5. 选择场景图风格：北欧风 / 现代风 / 轻奢风 / 母婴风 / 家居实拍风。
+6. 点击生成详情页或批量生成。
+7. 在右侧查看商品图片、平台标题、卖点、场景图 Prompt 和 HTML 详情页预览。
+8. 点击导出 HTML 下载当前平台的独立 HTML。
+9. 点击下载全部 ZIP 导出三平台 HTML、标题文本、卖点文本、场景 Prompt 和场景图占位目录说明。
 
 ## 主要接口
 
-- `POST /api/generate`：上传一张或多张图片并生成识别结果、标题、卖点和三平台 HTML。
+- `POST /api/generate`：上传一张或多张图片并生成识别结果、标题、卖点、场景图 Prompt 和三平台 HTML。
 - `GET /api/generations`：查看历史记录。
 - `GET /api/generations/{id}`：查看单条记录。
 - `GET /api/generations/{id}/html?platform=taobao`：查看指定平台 HTML。
 - `GET /api/generations/{id}/export?platform=taobao`：下载指定平台 HTML。
-- `GET /api/generations/export.zip?ids=1,2,3`：下载 ZIP，包含三平台 HTML、`titles.txt` 和 `selling_points.txt`。
+- `GET /api/generations/export.zip?ids=1,2,3`：下载 ZIP，包含三平台 HTML、`titles.txt`、`selling_points.txt`、`scene_prompts.txt` 和 `scenes/README.txt`。
 - `GET /api/uploads/{filename}`：访问上传图片。
 
 ## 验证命令
@@ -124,4 +142,29 @@ npm.cmd run build
 ```bash
 copy .env.example .env
 docker compose up --build
+```
+
+Docker 前端使用 Nginx 提供生产构建文件，并将 `/api` 和 `/static` 反向代理到后端。
+容器内的 Ollama 地址由 Compose 设置为 `http://host.docker.internal:11434`。
+
+## 存储清理（默认只读）
+
+以下命令只报告无引用上传文件和超过 20 MB 的旧记录，不会删除任何内容：
+
+```bash
+python -m backend.scripts.cleanup_storage
+```
+
+确需清理时必须显式提供删除范围、`--apply` 和 `--yes`。删除大记录前脚本会先备份数据库：
+
+```bash
+python -m backend.scripts.cleanup_storage --delete-orphans --apply --yes
+python -m backend.scripts.cleanup_storage --delete-large-records --max-record-mb 20 --vacuum --apply --yes
+```
+
+## 自动化测试
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest backend/tests -q
 ```

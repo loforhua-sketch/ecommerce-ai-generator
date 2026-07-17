@@ -222,6 +222,15 @@ h1 {
   font-weight: 700;
 }
 
+.scene-prompt-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scene-prompt-list .copy-line {
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+}
+
 .copy-text {
   margin-top: 10px;
   color: #435363;
@@ -381,6 +390,10 @@ iframe {
   }
 
   .copy-line {
+    grid-template-columns: 1fr;
+  }
+
+  .scene-prompt-list .copy-line {
     grid-template-columns: 1fr;
   }
 }

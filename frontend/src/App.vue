@@ -75,6 +75,16 @@
           </el-form-item>
         </div>
 
+        <el-form-item label="场景图风格">
+          <el-select v-model="form.sceneStyle">
+            <el-option label="北欧风" value="nordic" />
+            <el-option label="现代风" value="modern" />
+            <el-option label="轻奢风" value="light_luxury" />
+            <el-option label="母婴风" value="maternal_baby" />
+            <el-option label="家居实拍风" value="home_real" />
+          </el-select>
+        </el-form-item>
+
         <el-button native-type="submit" type="primary" size="large" :loading="loading">
           <el-icon><MagicStick /></el-icon>
           {{ fileList.length > 1 ? "批量生成" : "生成详情页" }}
@@ -180,6 +190,18 @@
                   <el-empty v-else description="暂无卖点" />
                 </el-tab-pane>
 
+                <el-tab-pane label="场景图 Prompt">
+                  <div v-if="scenePrompts(item).length" class="scene-prompt-list">
+                    <div v-for="(prompt, promptIndex) in scenePrompts(item)" :key="`${prompt.prompt}-${promptIndex}`">
+                      <CopyLine
+                        :label="promptLabel(prompt, promptIndex)"
+                        :value="prompt.prompt"
+                      />
+                    </div>
+                  </div>
+                  <el-empty v-else description="暂无场景图 Prompt" />
+                </el-tab-pane>
+
                 <el-tab-pane label="HTML 详情页预览">
                   <iframe :srcdoc="previewHtml(item)" title="HTML 详情页预览"></iframe>
                 </el-tab-pane>
@@ -226,7 +248,8 @@ const form = reactive({
   price: "",
   originPrice: "",
   platform: "taobao",
-  style: "simple"
+  style: "simple",
+  sceneStyle: "modern"
 });
 
 let progressTimer = null;
@@ -255,6 +278,26 @@ function sellingPoints(item) {
   const analysis = item?.analysis || {};
   const value = analysis.selling_points || analysis.core_selling_points || [];
   return Array.isArray(value) ? value : [];
+}
+
+function scenePrompts(item) {
+  const value = item?.analysis?.scene_prompts || [];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry === "string") return { prompt: entry };
+      return {
+        style: entry?.style || "",
+        scene: entry?.scene || "",
+        prompt: entry?.prompt || ""
+      };
+    })
+    .filter((entry) => entry.prompt);
+}
+
+function promptLabel(prompt, index) {
+  const bits = [prompt.style, prompt.scene].filter(Boolean).join(" / ");
+  return bits || `Prompt ${index + 1}`;
 }
 
 function imageSrc(item) {
@@ -330,6 +373,7 @@ function buildPayload() {
   payload.append("origin_price", form.originPrice);
   payload.append("platform", form.platform);
   payload.append("style", form.style);
+  payload.append("scene_style", form.sceneStyle);
   return payload;
 }
 
@@ -345,7 +389,13 @@ async function generate() {
 
   try {
     const response = await generateDetails(payload);
-    const items = Array.isArray(response.data?.items) ? response.data.items : [];
+    const sceneImages = Array.isArray(response.data?.scene_images) ? response.data.scene_images : [];
+    const items = Array.isArray(response.data?.items)
+      ? response.data.items.map((item) => ({
+          ...item,
+          scene_images: Array.isArray(item?.scene_images) ? item.scene_images : sceneImages
+        }))
+      : [];
     if (!items.length) {
       emptyResultMessage.value = "后端返回 items 为空，未生成可展示结果。";
       ElMessage.warning(emptyResultMessage.value);
