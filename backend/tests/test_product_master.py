@@ -17,6 +17,12 @@ def _product_image() -> np.ndarray:
     return image
 
 
+def _product_image_with_fold_band() -> np.ndarray:
+    image = _product_image()
+    image[185:211, 50:451] = (20, 210, 40)
+    return image
+
+
 def test_fixed_master_has_dimensioned_transparent_png() -> None:
     master = generate_product_master(_product_image(), width_px=650)
     assert master.rgba.shape == (240, 650, 4)
@@ -53,7 +59,25 @@ def test_three_master_assets_are_saved(tmp_path) -> None:
     assert debug.shape == (269, 650, 3)
     assert debug_fold.shape == (78, 650, 3)
     np.testing.assert_array_equal(mask, top[:, :, 3])
-    np.testing.assert_array_equal(fold[0], top[-1])
+    assert not np.array_equal(fold[0], top[-1])
+
+
+def test_fold_uses_full_product_bottom_and_top_excludes_that_source() -> None:
+    master = generate_product_master(_product_image_with_fold_band(), width_px=650)
+    full = master._full_rgba
+    assert full is not None
+    source_height = max(1, int(round(full.shape[0] * 3.0 / 24.0)))
+    assert source_height < full.shape[0]
+    expected_fold = full[-source_height:, :, :][::-1]
+    expected_fold = cv2.resize(expected_fold, (650, 30), interpolation=cv2.INTER_AREA)
+
+    assert master.rgba.shape == (240, 650, 4)
+    assert master.fold_rgba.shape == (30, 650, 4)
+    assert master.rgba.size > 0
+    np.testing.assert_array_equal(master.fold_rgba, expected_fold)
+    assert not any(np.array_equal(master.rgba[-1], row)
+                   for row in full[-source_height:])
+    assert not np.array_equal(master.rgba[-1], master.fold_rgba[0])
 
 
 def test_user_top_arc_is_preserved_not_regenerated() -> None:

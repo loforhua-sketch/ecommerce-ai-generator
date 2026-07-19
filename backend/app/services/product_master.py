@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -28,6 +28,10 @@ class ProductMaster:
     depth_cm: float
     orientation: str = "normal"
     orientation_uncertain: bool = False
+    _full_rgba: np.ndarray | None = field(default=None, init=False, repr=False,
+                                          compare=False)
+    _fold_rgba: np.ndarray | None = field(default=None, init=False, repr=False,
+                                          compare=False)
 
     @property
     def width_px(self) -> int:
@@ -47,14 +51,11 @@ class ProductMaster:
     @property
     def fold_rgba(self) -> np.ndarray:
         """Return the straight-front 65 x 3 cm texture strip."""
-        fold_height = max(1, int(round(self.width_px * 3.0 / self.width_cm)))
-        source_height = max(1, int(round(self.height_px * 3.0 / self.depth_cm)))
-        # The hinge is the top row of the fold and the bottom row of the top
-        # plane. Sampling inward from that shared edge preserves continuity.
-        source = self.rgba[-source_height:, :, :][::-1]
-        if source.shape[0] == fold_height:
-            return source.copy()
-        return cv2.resize(source, (self.width_px, fold_height), interpolation=cv2.INTER_AREA)
+        if self._fold_rgba is not None:
+            return self._fold_rgba.copy()
+        full_rgba = self._full_rgba if self._full_rgba is not None else self.rgba
+        return _fold_rgba_from_full(full_rgba, self.width_px, self.width_cm,
+                                    self.depth_cm)
 
 
 def encode_png(image: np.ndarray) -> bytes:
@@ -161,15 +162,49 @@ def generate_product_master(
 
     prepared = prepare_product_rgba(product)
     height_px = int(round(width_px * MASTER_DEPTH_CM / MASTER_WIDTH_CM))
-    master = _preserve_user_arc(prepared, width_px, height_px)
+    full_rgba = _preserve_user_arc(prepared, width_px, height_px)
+    master_fold = _fold_rgba_from_full(full_rgba, width_px, MASTER_WIDTH_CM,
+                                       MASTER_DEPTH_CM)
+    master_top = _top_rgba_from_full(full_rgba, width_px, height_px)
 
-    return ProductMaster(
-        rgba=master,
+    master = ProductMaster(
+        rgba=master_top,
         width_cm=MASTER_WIDTH_CM,
         depth_cm=MASTER_DEPTH_CM,
         orientation="normal",
         orientation_uncertain=False,
     )
+    object.__setattr__(master, "_full_rgba", full_rgba)
+    object.__setattr__(master, "_fold_rgba", master_fold)
+    return master
+
+
+def _fold_rgba_from_full(full_rgba: np.ndarray, width: int, width_cm: float,
+                         depth_cm: float) -> np.ndarray:
+    """Extract the physical 3 cm fold from the complete normalized product."""
+    if full_rgba.ndim != 3 or full_rgba.shape[2] != 4:
+        raise ValueError("full product master must be RGBA")
+    fold_height = max(1, int(round(width * 3.0 / width_cm)))
+    source_height = max(1, int(round(full_rgba.shape[0] * 3.0 / depth_cm)))
+    if source_height >= full_rgba.shape[0]:
+        raise ValueError("fold source height must be smaller than full product height")
+    source = full_rgba[-source_height:, :, :][::-1]
+    if source.shape[0] == fold_height:
+        return source.copy()
+    return cv2.resize(source, (width, fold_height), interpolation=cv2.INTER_AREA)
+
+
+def _top_rgba_from_full(full_rgba: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Remove the physical fold source, then restore the fixed top dimensions."""
+    if full_rgba.ndim != 3 or full_rgba.shape[2] != 4:
+        raise ValueError("full product master must be RGBA")
+    source_height = max(1, int(round(full_rgba.shape[0] * 3.0 / MASTER_DEPTH_CM)))
+    if source_height >= full_rgba.shape[0]:
+        raise ValueError("fold source height must be smaller than full product height")
+    top_source = full_rgba[:-source_height]
+    if not top_source.size or top_source.shape[0] < 2:
+        raise ValueError("product top cannot be empty after removing fold source")
+    return _preserve_user_arc(top_source, width, height)
 
 
 def _preserve_user_arc(product_rgba: np.ndarray, width: int, height: int) -> np.ndarray:
