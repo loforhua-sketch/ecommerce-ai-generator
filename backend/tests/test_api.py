@@ -5,6 +5,8 @@ from io import BytesIO
 from zipfile import ZipFile
 
 import pytest
+import cv2
+import numpy as np
 from fastapi.testclient import TestClient
 
 
@@ -54,6 +56,24 @@ def test_health(client: TestClient):
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_fixed_product_master_endpoint(client: TestClient):
+    source = np.full((120, 260, 3), 248, np.uint8)
+    cv2.rectangle(source, (25, 25), (235, 105), (35, 95, 185), -1)
+    success, encoded = cv2.imencode(".png", source)
+    assert success
+    response = client.post(
+        "/api/product-master",
+        files={"file": ("product.png", encoded.tobytes(), "image/png")},
+        data={"width_px": "650"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["x-master-pixels"] == "650x240"
+    assert response.headers["x-master-dimensions-cm"] == "65x24"
+    master = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_UNCHANGED)
+    assert master.shape == (240, 650, 4)
 
 
 def test_upload_and_mock_generation(client: TestClient, generated: dict):

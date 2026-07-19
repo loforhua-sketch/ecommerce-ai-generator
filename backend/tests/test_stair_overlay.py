@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from backend.app.services.stair_overlay.compositor import (
-    alpha_blend, compose_stair_overlay, perspective_semantic_samples,
+    alpha_blend, compose_stair_overlay, perspective_semantic_samples, warp_product_mesh,
 )
 from backend.app.services.stair_overlay.fold_renderer import render_fold, validate_fold_ratio
 from backend.app.services.stair_overlay.geometry import get_tread_edges, inset_quad, load_treads, save_treads, shrink_quad, validate_margin
@@ -64,7 +64,10 @@ def test_small_generated_image_perspective_composition() -> None:
     product_bgr = np.full((20, 40, 3), (20, 80, 210), dtype=np.uint8)
     product_rgba = prepare_product_rgba(product_bgr)
     treads = [[[15, 20], [105, 18], [100, 50], [20, 52]]]
-    result = compose_stair_overlay(stair, product_rgba, treads)
+    canvas = np.concatenate((product_rgba, product_rgba[-3:]), axis=0)
+    result = compose_stair_overlay(
+        stair, canvas, treads, master_top_height=product_rgba.shape[0],
+    )
     output = temp_dir / "result.png"
     try:
         assert cv2.imwrite(str(output), result)
@@ -104,7 +107,7 @@ def test_cli_real_installation_defaults() -> None:
     assert args.rear_margin == 0.06
     assert args.front_margin == 0.0
     assert args.fold is True
-    assert args.orientation == "auto"
+    assert args.orientation == "normal"
 
 
 @pytest.mark.parametrize("value", [-1, 256])
@@ -259,18 +262,21 @@ def test_debug_layers_and_final_canvas_have_expected_dimensions() -> None:
     stair = np.zeros((70, 110, 3), np.uint8)
     product = np.full((30, 60, 4), 255, np.uint8)
     layers: dict[str, np.ndarray] = {}
-    result = compose_stair_overlay(stair, product,
-                                   [[[10, 10], [100, 10], [95, 45], [15, 45]]],
-                                   debug_layers=layers)
+    canvas = np.concatenate((product, product[-3:]), axis=0)
+    result = compose_stair_overlay(
+        stair, canvas, [[[10, 10], [100, 10], [95, 45], [15, 45]]],
+        master_top_height=product.shape[0], debug_layers=layers,
+    )
     assert result.shape == stair.shape
     for name in ("top", "fold", "hinge"):
         assert layers[name].shape == (70, 110, 4)
+    assert layers["final_mask"].shape == stair.shape[:2]
 
 
 def test_cli_geometry_defaults() -> None:
     args = build_parser().parse_args([])
     assert (args.mat_width_cm, args.mat_depth_cm, args.fold_height_cm) == (65, 24, 3)
-    assert (args.arch_rise_ratio, args.side_straight_ratio) == (0.22, 0.46)
+    assert (args.arch_rise_ratio, args.side_straight_ratio) == (0.28, 0.55)
 
 
 def test_dimensioned_plane_is_65_by_24_and_excludes_fold() -> None:
@@ -424,3 +430,59 @@ def test_reversed_physical_quad_is_blocked_by_fold_quality_gate() -> None:
     # callers must supply correctly migrated rear/front points.
     assert np.allclose(geometry.hinge_left, bad[3])
     assert np.allclose(geometry.hinge_right, bad[2])
+
+
+def test_fold_mesh_is_downward_single_clipped_face_without_flip_or_spikes() -> None:
+    top = np.zeros((24, 65, 4), np.uint8)
+    top[:] = (20, 80, 210, 255)
+    # Distinct rows make an accidental vertical flip observable.
+    fold = np.zeros((4, 65, 4), np.uint8)
+    fold[0] = (10, 20, 30, 255)
+    fold[1] = (40, 50, 60, 255)
+    fold[2] = (70, 80, 90, 255)
+    fold[3] = (100, 110, 120, 255)
+    canvas = np.concatenate((top, fold[1:]), axis=0)
+    target = np.float32([[20, 10], [120, 12], [112, 62], [28, 60]])
+    geometry = build_warped_geometry(target, dimensions=MatDimensions())
+    instance, top_face, fold_face = warp_product_mesh(canvas, 24, geometry, (150, 100))
+
+    assert np.mean(geometry.fold_quad[2:, 1]) > np.mean(geometry.fold_quad[:2, 1])
+    np.testing.assert_array_equal(geometry.fold_quad[0], target[3])
+    np.testing.assert_array_equal(geometry.fold_quad[1], target[2])
+    assert cv2.connectedComponents((fold_face[:, :, 3] >= 24).astype(np.uint8))[0]-1 == 1
+    riser = np.zeros(fold_face.shape[:2], np.uint8)
+    cv2.fillConvexPoly(riser, np.rint(geometry.fold_quad).astype(np.int32), 255)
+    assert not np.any((fold_face[:, :, 3] >= 24) & (riser == 0))
+    overlap = (top_face[:, :, 3] >= 24) & (fold_face[:, :, 3] >= 24)
+    ys, xs = np.nonzero(overlap)
+    assert _line_distance(np.column_stack((xs, ys)), geometry.hinge_left,
+                          geometry.hinge_right).max(initial=0) <= 1
+    hinge_y = int(round(np.mean(geometry.fold_quad[:2, 1])))
+    bottom_y = int(round(np.mean(geometry.fold_quad[2:, 1])))
+    assert fold_face[hinge_y, :, :3].sum() > 0
+    assert fold_face[bottom_y, :, :3].sum() > 0
+    assert instance[:, :, 3].max() == 255
+
+
+def test_each_tread_has_exactly_one_fold_render_pass_and_one_composite(monkeypatch) -> None:
+    stair = np.zeros((100, 160, 3), np.uint8)
+    top = np.full((24, 65, 4), (20, 80, 210, 255), np.uint8)
+    canvas = np.concatenate((top, top[-3:]), axis=0)
+    treads = [
+        [[15, 10], [145, 10], [138, 40], [22, 40]],
+        [[15, 55], [145, 55], [138, 82], [22, 82]],
+    ]
+    import backend.app.services.stair_overlay.compositor as compositor
+    calls = 0
+    original = compositor.alpha_composite_premultiplied
+
+    def counted(background, overlay):
+        nonlocal calls
+        calls += 1
+        return original(background, overlay)
+
+    monkeypatch.setattr(compositor, "alpha_composite_premultiplied", counted)
+    layers = {}
+    compose_stair_overlay(stair, canvas, treads, master_top_height=24, debug_layers=layers)
+    assert calls == len(treads)
+    assert int(layers["fold_render_passes"][0]) == len(treads)

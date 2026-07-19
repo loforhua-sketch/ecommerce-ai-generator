@@ -28,10 +28,10 @@ class MatDimensions:
 
 @dataclass(frozen=True)
 class MatShapeParameters:
-    side_straight_ratio: float = 0.46
-    arch_rise_ratio: float = 0.22
+    side_straight_ratio: float = 0.55
+    arch_rise_ratio: float = 0.28
     shoulder_smoothing_ratio: float = 0.05
-    bottom_corner_ratio: float = 0.025
+    bottom_corner_ratio: float = 0.08
 
 
 @dataclass(frozen=True)
@@ -39,9 +39,9 @@ class StairMatRenderConfig:
     width_cm: float = 65.0
     depth_cm: float = 24.0
     fold_height_cm: float = 3.0
-    orientation: str = "auto"
-    arch_rise_ratio: float = 0.22
-    side_straight_ratio: float = 0.46
+    orientation: str = "normal"
+    arch_rise_ratio: float = 0.28
+    side_straight_ratio: float = 0.55
     left_margin: float = 0.08
     right_margin: float = 0.08
     rear_margin: float = 0.06
@@ -274,11 +274,11 @@ def build_warped_geometry(top_quad: np.ndarray, fold_ratio: float = 0.125,
     left, right = quad[3].copy(), quad[2].copy()  # the single authoritative hinge
     rear_mid, front_mid = (quad[0]+quad[1])/2, (left+right)/2
     depth = float(np.linalg.norm(front_mid-rear_mid))
-    direction = front_mid-rear_mid
-    norm = float(np.linalg.norm(direction))
-    direction = direction/norm if norm > 1e-4 else np.array([0, 1], np.float32)
     fold_px = depth*dimensions.fold_to_depth_ratio
-    offset = direction*fold_px
+    # The front edge is the authoritative tread/riser intersection.  A riser is
+    # below that edge in image space; never extrapolate the tread homography or
+    # infer a hinge from a mask/edge slope.
+    offset = np.asarray([0.0, fold_px], np.float32)
     fold = np.asarray([left, right, right+offset, left+offset], np.float32)
     return WarpedMatGeometry(quad, left, right, fold, depth, fold_px)
 

@@ -34,17 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--right-margin", type=float, default=0.08)
     parser.add_argument("--rear-margin", type=float, default=0.06)
     parser.add_argument("--front-margin", type=float, default=0.0)
-    parser.add_argument("--orientation", choices=ORIENTATIONS, default="auto")
+    parser.add_argument("--orientation", choices=ORIENTATIONS, default="normal")
     parser.add_argument("--mat-width-cm", type=float, default=65.0)
     parser.add_argument("--mat-depth-cm", type=float, default=24.0)
     parser.add_argument("--fold-height-cm", type=float, default=3.0)
-    parser.add_argument("--arch-rise-ratio", type=float, default=0.22)
-    parser.add_argument("--side-straight-ratio", type=float, default=0.46)
+    parser.add_argument("--arch-rise-ratio", type=float, default=0.28)
+    parser.add_argument("--side-straight-ratio", type=float, default=0.55)
     parser.add_argument("--arch-height-ratio", type=float, default=None,
                         help="已弃用；请使用 --arch-rise-ratio")
     parser.add_argument("--side-round-ratio", type=float, default=None,
                         help=argparse.SUPPRESS)
-    parser.add_argument("--bottom-corner-ratio", type=float, default=0.025)
+    parser.add_argument("--bottom-corner-ratio", type=float, default=0.08)
     fold_group = parser.add_mutually_exclusive_group()
     fold_group.add_argument("--fold", dest="fold", action="store_true")
     fold_group.add_argument("--no-fold", dest="fold", action="store_false")
@@ -127,19 +127,28 @@ def main(argv: list[str] | None = None) -> int:
 
         asset_dir = BACKEND_DIR / "test_assets" / "mvp01"
         stair = read_image(asset_dir / "stair.jpg", description="楼梯图片")
-        product = read_image(asset_dir / "product.png", unchanged=True, description="产品图片")
-        rgba = prepare_product_rgba(product, args.white_threshold,
-                                    args.saturation_threshold, alpha_cutoff=args.alpha_cutoff)
-        rgba, orientation_log, uncertain = orient_product(rgba, config.orientation)
-        print(orientation_log)
+        master_dir = asset_dir / "master"
+        master_top = read_image(master_dir / "master_top.png", unchanged=True,
+                                description="冻结 master_top")
+        master_fold = read_image(master_dir / "master_fold.png", unchanged=True,
+                                 description="冻结 master_fold")
+        if master_top.ndim != 3 or master_top.shape[2] != 4:
+            raise ValueError("master_top must be BGRA")
+        if master_fold.ndim != 3 or master_fold.shape[2] != 4:
+            raise ValueError("master_fold must be BGRA")
+        if master_top.shape[1] != master_fold.shape[1]:
+            raise ValueError("master_top and master_fold widths must match")
+        # The first fold row is the shared hinge. It appears exactly once in
+        # the frozen source canvas and is never rebuilt inside the tread loop.
+        rgba = np.concatenate((master_top, master_fold[1:]), axis=0)
+        uncertain = False
+        print("使用冻结 orientation: normal")
         print("产品局部坐标：")
         print("顶部 = 圆弧，靠近上一级")
         print("底部 = 直边，靠近下一级")
         print(f"折边 = 从底部直边向下{config.fold_height_cm:g}cm")
-        rgba, geometry_mask = map_texture_to_contour(
-            rgba, config.arch_rise_ratio, bottom_corner_ratio=args.bottom_corner_ratio,
-            dimensions=dimensions, side_straight_ratio=config.side_straight_ratio)
-        h, w = rgba.shape[:2]
+        geometry_mask = master_top[:, :, 3]
+        h, w = master_top.shape[:2]
         contour = generate_dimensioned_mat_contour(
             w, h, dimensions, config.arch_rise_ratio, config.side_straight_ratio,
             bottom_corner_ratio=args.bottom_corner_ratio)
@@ -152,8 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.debug_mask:
             _write(asset_dir / "debug_dimensioned_contour.png", _dimension_debug(w, h, contour))
             _write(asset_dir / "debug_geometry_mask.png", geometry_mask)
-            _write(asset_dir / "debug_geometry_rgba.png", rgba)
-            _write(asset_dir / "debug_orientation.png", _orientation_debug(rgba, config.fold_height_cm))
+            _write(asset_dir / "debug_geometry_rgba.png", master_top)
+            _write(asset_dir / "debug_orientation.png", _orientation_debug(master_top, config.fold_height_cm))
 
         stair_h, stair_w = stair.shape[:2]
         points_path = asset_dir / "treads.json"
@@ -170,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             fold_darkening=args.fold_darkening, fold_texture_ratio=args.fold_texture_ratio,
             shadow=not args.no_shadow, shadow_offset=args.shadow_offset,
             shadow_opacity=args.shadow_opacity, contact_shadow=args.contact_shadow,
+            master_top_height=master_top.shape[0], alpha_cutoff=args.alpha_cutoff,
             debug_layers=layers, config=config,
         )
         if result.shape != stair.shape:
@@ -184,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
             _write(asset_dir / "debug_top_overlay.png", layers["top"])
             _write(asset_dir / "debug_fold_overlay.png", layers["fold"])
             _write(asset_dir / "debug_hinge_overlay.png", layers["hinge"])
+            _write(asset_dir / "debug_final_mask.png", layers["final_mask"])
+            _write(asset_dir / "debug_tread_fold_geometry.png", layers["tread_fold_geometry"])
+            _write(asset_dir / "debug_fold_only.png", layers["fold_only"])
         output_path = asset_dir / "result.png"
         _write(output_path, result)
         print(f"已输出最终图片: {output_path}")

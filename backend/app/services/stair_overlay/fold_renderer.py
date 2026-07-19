@@ -8,6 +8,25 @@ import numpy as np
 from .geometry_model import MatDimensions, build_warped_geometry
 
 
+def build_single_canvas(top_rgba: np.ndarray,
+                        dimensions: MatDimensions = MatDimensions()) -> np.ndarray:
+    """Build the sole 65 x (24 + 3) cm source canvas used by every tread.
+
+    The fold is a continuation of the plane's straight front edge.  It is not a
+    second product image: the first fold row is the shared hinge row and later
+    rows sample progressively inward from that same authored texture.
+    """
+    dimensions.validate()
+    h, w = top_rgba.shape[:2]
+    fold_h = max(1, int(round(h * dimensions.fold_to_depth_ratio)))
+    source_rows = np.linspace(h - 1, max(0, h - 1 - fold_h), fold_h + 1)
+    source_rows = np.rint(source_rows).astype(np.int32)
+    fold = top_rgba[source_rows].copy()
+    # Keep only product-authored alpha/RGB.  No mask dilation or coloured ring.
+    fold[fold[:, :, 3] == 0, :3] = 0
+    return np.concatenate((top_rgba, fold[1:]), axis=0)
+
+
 def validate_fold_ratio(value: float) -> float:
     if not 0.03 <= value <= 0.25:
         raise ValueError("fold_ratio 必须在 0.03 到 0.25 之间")

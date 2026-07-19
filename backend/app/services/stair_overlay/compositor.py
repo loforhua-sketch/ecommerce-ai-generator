@@ -5,10 +5,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .fold_renderer import render_fold
 from .geometry import get_tread_edges, inset_quad
 from .geometry_model import (
-    MatDimensions, StairMatRenderConfig, build_warped_geometry, dimensioned_destination,
+    MatDimensions, StairMatRenderConfig, build_warped_geometry,
     quality_check_warped_geometry,
 )
 
@@ -91,17 +90,116 @@ def shadow_overlay(alpha: np.ndarray, offset: int, opacity: float, contact: bool
     return layer
 
 
-def _edge_thickness(top: np.ndarray) -> np.ndarray:
-    """Expand the authored edge by one pixel using nearby product colours."""
-    kernel = np.ones((3, 3), np.uint8)
-    expanded = cv2.dilate(top[:, :, 3], kernel)
-    ring = cv2.subtract(expanded, top[:, :, 3])
-    layer = np.zeros_like(top)
-    # Channel dilation samples the immediately adjacent binding instead of painting black.
-    sampled = cv2.dilate(top[:, :, :3], kernel)
-    layer[:, :, :3] = np.clip(sampled.astype(np.float32)*0.82, 0, 255).astype(np.uint8)
-    layer[:, :, 3] = (ring.astype(np.float32)*0.55).astype(np.uint8)
-    return layer
+def _clean_master_alpha(master: np.ndarray) -> np.ndarray:
+    """Remove opaque black pixels leaked from a transparent source background."""
+    clean = master.copy()
+    leaked = (np.max(clean[:, :, :3], axis=2) <= 12).astype(np.uint8)
+    count, labels = cv2.connectedComponents(leaked, connectivity=8)
+    if count <= 1:
+        return clean
+    border_labels = np.unique(np.concatenate((
+        labels[0], labels[-1], labels[:, 0], labels[:, -1],
+    )))
+    border_labels = border_labels[border_labels != 0]
+    if border_labels.size:
+        exterior = np.isin(labels, border_labels)
+        clean[exterior] = 0
+    clean[clean[:, :, 3] < 2] = 0
+    return clean
+
+
+def _warp_premultiplied(source: np.ndarray, target: np.ndarray,
+                        output_size: tuple[int, int], alpha_cutoff: int) -> np.ndarray:
+    """Warp one face of a product mesh; callers composite the product only once."""
+    h, w = source.shape[:2]
+    src = np.float32([(0, 0), (w-1, 0), (w-1, h-1), (0, h-1)])
+    clean = source.copy()
+    clean[clean[:, :, 3] == 0] = 0
+    alpha = clean[:, :, 3:4].astype(np.float32) / 255.0
+    premul = np.dstack((clean[:, :, :3].astype(np.float32)*alpha,
+                        clean[:, :, 3].astype(np.float32)))
+    matrix = cv2.getPerspectiveTransform(src, np.asarray(target, np.float32))
+    warped = cv2.warpPerspective(premul, matrix, output_size, flags=cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_CONSTANT,
+                                 borderValue=(0, 0, 0, 0))
+    warped[warped[:, :, 3] < alpha_cutoff] = 0
+    return warped
+
+
+def _quad_mask(quad: np.ndarray, output_size: tuple[int, int]) -> np.ndarray:
+    mask = np.zeros((output_size[1], output_size[0]), np.uint8)
+    cv2.fillConvexPoly(mask, np.rint(quad).astype(np.int32), 255, lineType=cv2.LINE_8)
+    return mask
+
+
+def warp_product_mesh(canvas_rgba: np.ndarray, top_height: int, geometry: object,
+                      output_size: tuple[int, int], alpha_cutoff: int = 18,
+                      fold_enabled: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Render the continuous top/fold mesh and return one product instance.
+
+    Source and destination face order is consistently TL, TR, BR, BL.  The two
+    warps are face rasterization, not separate product layers; they are joined
+    here and the returned instance is composited exactly once by the caller.
+    """
+    if not 1 < top_height < canvas_rgba.shape[0]:
+        raise ValueError("invalid product mesh top height")
+    top_source = canvas_rgba[:top_height]
+    # The first fold source row is the same authored hinge row as top[-1].
+    fold_source = np.concatenate((top_source[-1:], canvas_rgba[top_height:]), axis=0)
+    top = _warp_premultiplied(top_source, geometry.top_quad, output_size, alpha_cutoff)
+    fold = np.zeros_like(top)
+    if fold_enabled:
+        fold = _warp_premultiplied(fold_source, geometry.fold_quad, output_size, alpha_cutoff)
+        riser_mask = _quad_mask(geometry.fold_quad, output_size)
+        fold[riser_mask == 0] = 0
+        # Perspective interpolation can leak an antialiased fold sample back
+        # into the tread by more than the permitted hinge pixel.  Remove that
+        # raster fringe before validation; this also prevents lateral spikes.
+        yy, xx = np.indices(fold.shape[:2])
+        a, b = geometry.hinge_left, geometry.hinge_right
+        edge = b-a
+        signed = (edge[0]*(yy-a[1])-edge[1]*(xx-a[0])) / max(float(np.linalg.norm(edge)), 1e-6)
+        fold[(top[:, :, 3] >= 24) & (np.abs(signed) > 1.0)] = 0
+        _validate_product_faces(top[:, :, 3], fold[:, :, 3], riser_mask, geometry)
+    # Fold owns the shared one-pixel hinge; remove it from top before joining.
+    joined = top.copy()
+    joined[fold[:, :, 3] > 0] = fold[fold[:, :, 3] > 0]
+    return joined, top, fold
+
+
+def _validate_product_faces(top_alpha: np.ndarray, fold_alpha: np.ndarray,
+                            riser_mask: np.ndarray, geometry: object) -> None:
+    top_y = float(np.mean(geometry.fold_quad[:2, 1]))
+    bottom_y = float(np.mean(geometry.fold_quad[2:, 1]))
+    if bottom_y <= top_y:
+        raise ValueError("fold bottom must be below fold top")
+    hinge_error = max(float(np.linalg.norm(geometry.fold_quad[0]-geometry.hinge_left)),
+                      float(np.linalg.norm(geometry.fold_quad[1]-geometry.hinge_right)))
+    if hinge_error > 1.0:
+        raise ValueError("fold top and tread front edge differ by more than 1px")
+    if np.any((fold_alpha >= 24) & (riser_mask == 0)):
+        raise ValueError("fold mask exceeds riser quad")
+    binary = (fold_alpha >= 24).astype(np.uint8)
+    components = cv2.connectedComponents(binary, connectivity=8)[0]-1
+    if components != 1:
+        raise ValueError("fold alpha must contain exactly one connected region")
+    # Faces may share only the rasterized hinge band (one pixel plus AA tolerance).
+    overlap = (top_alpha >= 24) & (fold_alpha >= 24)
+    if np.any(overlap):
+        ys, xs = np.nonzero(overlap)
+        a, b = geometry.hinge_left, geometry.hinge_right
+        edge = b-a
+        distance = np.abs(edge[0]*(ys-a[1])-edge[1]*(xs-a[0])) / max(float(np.linalg.norm(edge)), 1e-6)
+        if float(distance.max()) > 1.0:
+            raise ValueError("top and fold overlap outside the 1px hinge")
+
+
+def alpha_composite_premultiplied(background: np.ndarray,
+                                  warped: np.ndarray) -> np.ndarray:
+    """Composite one premultiplied warped canvas without edge unpremultiplication."""
+    alpha = warped[:, :, 3:4] / 255.0
+    value = warped[:, :, :3] + background.astype(np.float32) * (1.0 - alpha)
+    return np.clip(value, 0, 255).astype(np.uint8)
 
 
 def compose_stair_overlay(
@@ -123,6 +221,8 @@ def compose_stair_overlay(
     fold_darkening: float = 0.15,
     fold_texture_ratio: float = 0.10,
     bottom_corner_ratio: float = 0.25,
+    master_top_height: int | None = None,
+    alpha_cutoff: int = 18,
     debug_layers: dict[str, np.ndarray] | None = None,
     config: StairMatRenderConfig | None = None,
 ) -> np.ndarray:
@@ -144,41 +244,35 @@ def compose_stair_overlay(
         raise ValueError("At least one tread is required")
     result = stair_bgr.copy()
     size = (stair_bgr.shape[1], stair_bgr.shape[0])
-    combined_top = np.zeros((*stair_bgr.shape[:2], 4), np.uint8)
-    combined_fold = np.zeros_like(combined_top)
-    combined_hinge = np.zeros_like(combined_top)
+    if master_top_height is None:
+        raise ValueError("master_top_height is required for the frozen top+fold canvas")
+    master_canvas = _clean_master_alpha(product_rgba)
+    final_mask = np.zeros(stair_bgr.shape[:2], np.uint8)
+    combined_hinge = np.zeros((*stair_bgr.shape[:2], 4), np.uint8)
     debug_top = cv2.cvtColor(stair_bgr, cv2.COLOR_BGR2BGRA)
     debug_fold = debug_top.copy()
     debug_hinge = debug_top.copy()
+    fold_render_passes = 0
+    fold_only = np.zeros((*stair_bgr.shape[:2], 4), np.uint8)
+    debug_geometry = cv2.cvtColor(stair_bgr, cv2.COLOR_BGR2BGRA)
     for points in treads:
         edges = get_tread_edges(points)
         destination = inset_quad(edges.as_quad(), left, right, rear, front_margin)
-        destination = dimensioned_destination(destination, dimensions)
         geometry = build_warped_geometry(destination, fold_ratio, dimensions)
         failed = [name for name, passed in quality_check_warped_geometry(
             geometry, dimensions).items() if not passed]
         if failed:
             raise ValueError("warped geometry quality check failed: " + ", ".join(failed))
-        rear_samples, front_samples = perspective_semantic_samples(product_rgba, destination)
+        top_master = master_canvas[:master_top_height]
+        rear_samples, front_samples = perspective_semantic_samples(top_master, destination)
         _validate_boundary_semantics(rear_samples, front_samples, geometry)
-        top = warp_product(product_rgba, destination, size)
-        fold_layer = render_fold(product_rgba, destination, size, fold_ratio,
-                                 fold_texture_ratio, fold_darkening,
-                                 bottom_corner_ratio, dimensions) if fold else np.zeros_like(top)
-        if fold:
-            _validate_fold_alpha(fold_layer[:, :, 3], geometry)
-        total_alpha = np.maximum(top[:, :, 3], fold_layer[:, :, 3])
-        if shadow:
-            result = alpha_blend(result, shadow_overlay(total_alpha, shadow_offset, shadow_opacity))
-        # The vertical face goes down first; the top face then closes/softens the hinge.
-        if fold:
-            result = alpha_blend(result, fold_layer)
-            combined_fold = _merge_rgba(combined_fold, fold_layer)
-        result = alpha_blend(result, _edge_thickness(top))
-        result = alpha_blend(result, top)
-        combined_top = _merge_rgba(combined_top, top)
-        if contact_shadow:
-            result = alpha_blend(result, shadow_overlay(total_alpha, 1, 0.14, contact=True))
+        warped, warped_top, warped_fold = warp_product_mesh(
+            master_canvas, master_top_height, geometry, size, alpha_cutoff, fold,
+        )
+        fold_render_passes += 1
+        final_mask = np.maximum(final_mask, warped[:, :, 3].astype(np.uint8))
+        fold_only = cv2.max(fold_only, warped_fold.astype(np.uint8))
+        result = alpha_composite_premultiplied(result, warped)
         if debug_layers is not None:
             rear_left, rear_right, front_right, front_left = destination
             rl, rr = tuple(np.rint(rear_left).astype(int)), tuple(np.rint(rear_right).astype(int))
@@ -192,10 +286,6 @@ def compose_stair_overlay(
                 cv2.circle(debug_top, tuple(np.rint(front_sample).astype(int)), 7,
                            (255, 80, 0, 255), -1, cv2.LINE_AA)
 
-            tinted = np.zeros_like(fold_layer)
-            tinted[:, :, 2] = 255
-            tinted[:, :, 3] = (fold_layer[:, :, 3].astype(np.float32)*.55).astype(np.uint8)
-            debug_fold = _merge_rgba(debug_fold, tinted)
             cv2.line(debug_fold, rl, rr, (0, 190, 0, 255), 5, cv2.LINE_AA)
             cv2.line(debug_fold, fl, fr, (0, 255, 255, 255), 5, cv2.LINE_AA)
             cv2.putText(debug_fold, "REAR - NO FOLD", rl, cv2.FONT_HERSHEY_SIMPLEX,
@@ -222,11 +312,24 @@ def compose_stair_overlay(
             hinge_mid = tuple(np.rint((geometry.hinge_left+geometry.hinge_right)/2).astype(int))
             cv2.arrowedLine(debug_hinge, hinge_mid, fold_mid, (0, 0, 255, 255), 4,
                             cv2.LINE_AA, tipLength=.25)
+            bottom_left = tuple(np.rint(geometry.fold_quad[3]).astype(int))
+            bottom_right = tuple(np.rint(geometry.fold_quad[2]).astype(int))
+            cv2.line(debug_geometry, fl, fr, (255, 0, 0, 255), 3, cv2.LINE_AA)
+            cv2.line(debug_geometry, p1, p2, (0, 255, 255, 255), 2, cv2.LINE_AA)
+            cv2.line(debug_geometry, bottom_left, bottom_right, (0, 0, 255, 255), 3, cv2.LINE_AA)
+            cv2.arrowedLine(debug_geometry, hinge_mid, fold_mid, (0, 0, 255, 255), 3,
+                            cv2.LINE_AA, tipLength=.25)
+    if fold_render_passes != len(treads):
+        raise ValueError("fold_render_passes must equal one per tread")
     if debug_layers is not None:
         debug_layers["top"] = debug_top
         debug_layers["fold"] = debug_fold
         debug_layers["hinge"] = debug_hinge
+        debug_layers["final_mask"] = final_mask
         debug_layers["fold_height_px"] = np.asarray([geometry.fold_height_px], np.float32)
+        debug_layers["tread_fold_geometry"] = debug_geometry
+        debug_layers["fold_only"] = fold_only
+        debug_layers["fold_render_passes"] = np.asarray([fold_render_passes], np.int32)
     return result
 
 

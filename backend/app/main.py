@@ -18,6 +18,7 @@ from .database import Database
 from .services.html_builder import PLATFORM_FILENAMES, build_platform_htmls, normalize_platform, normalize_style
 from .services.ollama_service import OllamaProductService
 from .services.openai_service import OpenAIProductService
+from .services.product_master import decode_product_image, generate_product_master
 from .services.scene_image_service import generate_scene_images
 from .services.scene_prompt import (
     build_scene_prompts,
@@ -98,6 +99,34 @@ app.add_middleware(
 def health() -> dict[str, str]:
     settings = get_settings()
     return {"status": "ok", "provider": settings.ai_provider}
+
+
+@app.post("/api/product-master")
+async def create_product_master(
+    file: UploadFile = File(...),
+    width_px: int = Form(1300),
+) -> Response:
+    """Return a fixed-dimension transparent PNG product master."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="请上传图片文件")
+    try:
+        master = generate_product_master(
+            decode_product_image(await file.read()),
+            width_px=width_px,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        master.png_bytes(),
+        media_type="image/png",
+        headers={
+            "Content-Disposition": 'inline; filename="product-master.png"',
+            "X-Master-Pixels": f"{master.width_px}x{master.height_px}",
+            "X-Master-Dimensions-Cm": f"{master.width_cm:g}x{master.depth_cm:g}",
+            "X-Master-Orientation-Uncertain": str(master.orientation_uncertain).lower(),
+        },
+    )
 
 
 def get_product_service(settings: Settings) -> OpenAIProductService | OllamaProductService:
